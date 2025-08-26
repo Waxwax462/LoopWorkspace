@@ -258,6 +258,29 @@ jobs:
           submodules: recursive
           ref: ${{ env.TARGET_BRANCH }}
 
+      # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+      # MINIMAL ADDITION: point Loop submodule to your fork + checkout dev.
+      - name: Use my Loop fork (Food Search)
+        run: |
+          # Ensure .gitmodules points to your fork for "Loop"
+          git config -f .gitmodules submodule.Loop.url https://github.com/taylorpatterson-T1D/Loop.Food-Search.git
+          git submodule sync -- Loop
+
+          # Also update the already-cloned submodule's origin to your fork
+          if [ -d "Loop/.git" ]; then
+            git -C Loop remote set-url origin https://github.com/taylorpatterson-T1D/Loop.Food-Search.git
+            git -C Loop fetch origin --tags --prune
+            # Try dev first; fall back gracefully
+            git -C Loop checkout dev 2>/dev/null || git -C Loop fetch origin dev && git -C Loop checkout -B dev --track origin/dev || true
+          fi
+
+          echo "Effective Loop remote:"
+          git -C Loop remote -v || true
+          echo "Loop HEAD:"
+          git -C Loop rev-parse --abbrev-ref HEAD || true
+          git -C Loop log -1 --oneline || true
+      # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
       # Customize Loop: Download and apply patches
       - name: Customize Loop
         run: |
