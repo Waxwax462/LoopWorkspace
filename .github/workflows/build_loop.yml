@@ -50,11 +50,11 @@ jobs:
 
           if [[ $PERMISSIONS =~ "workflow" || $PERMISSIONS == "" ]]; then
             echo "GH_PAT holds workflow permissions or is fine-grained PAT."
-            echo "has_permission=true" >> $GITHUB_OUTPUT
+            echo "has_permission=true" >> $GITHUB_OUTPUT # Set WORKFLOW_PERMISSION to false.
           else 
             echo "GH_PAT lacks workflow permissions."
             echo "Automated build features will be skipped!"
-            echo "has_permission=false" >> $GITHUB_OUTPUT
+            echo "has_permission=false" >> $GITHUB_OUTPUT # Set WORKFLOW_PERMISSION to false.
           fi
 
       - name: Check for alive branches
@@ -151,6 +151,7 @@ jobs:
           upstream_sync_branch: ${{ env.UPSTREAM_BRANCH }}
           upstream_sync_repo: ${{ env.UPSTREAM_REPO }}
 
+      # Display a sample message based on the sync output var 'has_new_commits'
       - name: New commits found
         if: |
           needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' &&
@@ -169,9 +170,16 @@ jobs:
           echo ${{ steps.sync.outputs.has_new_commits }}
           echo "NEW_COMMITS=${{ steps.sync.outputs.has_new_commits }}" >> $GITHUB_OUTPUT
 
+      # Keep repository "alive": add empty commits to ALIVE_BRANCH after "time_elapsed" days of inactivity to avoid inactivation of scheduled workflows
       - name: Keep alive
         run: |
           echo "Keep Alive is no longer available"
+      #  if: |
+      #    needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' &&
+      #    (vars.SCHEDULED_BUILD != 'false' || vars.SCHEDULED_SYNC != 'false')
+      #  uses: gautamkrishnar/keepalive-workflow@v1 # using the workflow with default settings
+      #  with:
+      #    time_elapsed: 20 # Time elapsed from the previous commit to trigger a new automated commit (in days)
 
       - name: Show scheduled build configuration message
         if: needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION != 'true'
@@ -180,7 +188,7 @@ jobs:
           echo "You have not yet configured the scheduled sync and build for Loop's browser build." >> $GITHUB_STEP_SUMMARY
           echo "Synchronizing your fork of <code>LoopWorkspace</code> with the upstream repository <code>LoopKit/LoopWorkspace</code> will be skipped." >> $GITHUB_STEP_SUMMARY
           echo "If you want to enable automatic builds and updates for your Loop, please follow the instructions \
-                under the following path <code>LoopWorkspace/fastlane/testflight.md</code>."
+                under the following path <code>LoopWorkspace/fastlane/testflight.md</code>." >> $GITHUB_STEP_SUMMARY
 
   # Builds Loop
   build:
@@ -222,6 +230,7 @@ jobs:
           upstream_sync_branch: ${{ env.UPSTREAM_BRANCH }}
           upstream_sync_repo: ${{ env.UPSTREAM_REPO }}
 
+      # Display a sample message based on the sync output var 'has_new_commits'
       - name: New commits found
         if: |
           needs.check_alive_and_permissions.outputs.WORKFLOW_PERMISSION == 'true' &&
@@ -246,41 +255,60 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GH_PAT }}
-          # IMPORTANT: do NOT fetch submodules yet; we'll control it below
-          submodules: false
+          submodules: recursive
           ref: ${{ env.TARGET_BRANCH }}
 
-      - name: Point Loop submodule to my fork and init all submodules
+      # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+      # MINIMAL ADDITION: point Loop submodule to your fork + checkout dev.
+      - name: Use my Loop fork (Food Search)
         run: |
-          # Use your Loop fork for the Loop submodule
+          # Ensure .gitmodules points to your fork for "Loop"
           git config -f .gitmodules submodule.Loop.url https://github.com/taylorpatterson-T1D/Loop.Food-Search.git
           git submodule sync -- Loop
 
-          # Initialize/update ALL submodules (OmniBLE, OmniKit, RileyLinkKit, etc.)
-          git submodule update --init --force --recursive
+          # Also update the already-cloned submodule's origin to your fork
+          if [ -d "Loop/.git" ]; then
+            git -C Loop remote set-url origin https://github.com/taylorpatterson-T1D/Loop.Food-Search.git
+            git -C Loop fetch origin --tags --prune
+            # Try dev first; fall back gracefully
+            git -C Loop checkout dev 2>/dev/null || git -C Loop fetch origin dev && git -C Loop checkout -B dev --track origin/dev || true
+          fi
 
-          # OPTIONAL: pin Loop specifically to dev branch of your fork
-          git -C Loop fetch origin dev || true
-          git -C Loop checkout dev || true
-
-      - name: Show effective Loop remote (sanity check)
-        run: |
           echo "Effective Loop remote:"
-          git -C Loop remote -v
-          echo "Current Loop HEAD:"
+          git -C Loop remote -v || true
+          echo "Loop HEAD:"
           git -C Loop rev-parse --abbrev-ref HEAD || true
           git -C Loop log -1 --oneline || true
+      # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
       # Customize Loop: Download and apply patches
       - name: Customize Loop
         run: |
-          # Apply any patches in LoopWorkspace/patches/
-          if $(ls ./patches/* &> /dev/null); then
-            git apply ./patches/* --allow-empty -v --whitespace=fix
-          fi
-          # (Templates for submodule-specific patches are omitted for brevity)
 
-      # Patch Fastlane Match to not print tables (optional)
+          # LoopWorkspace patches
+          # -applies any patches located in the LoopWorkspace/patches/ directory
+          if $(ls ./patches/* &> /dev/null); then
+          git apply ./patches/* --allow-empty -v --whitespace=fix
+          fi
+
+          # Submodule Loop patches:
+          # Template for customizing submodule Loop (changes Loop app name to "CustomLoop")
+          # Remove the "#" sign from the beginning of the line below to activate:
+          #curl https://github.com/loopnlearn/Loop/commit/d206432b024279ef710df462b20bd464cd9682d4.patch | git apply --directory=Loop -v --whitespace=fix
+
+          # Submodule LoopKit patches:
+          # General template for customizing submodule LoopKit 
+          # Copy url from a GitHub commit or pull request and insert below, and remove the "#" sign from the beginning of the line to activate:
+          #curl url_to_github_commit.patch | git apply --directory=LoopKit -v --whitespace=fix
+
+          # Submodule xxxxx patches:
+
+          # Add patches for customization of additional submodules by following the templates above, 
+          # and make sure to specify the submodule by setting "--directory=(submodule_name)".
+          # Several patches may be added per submodule.
+          # Adding comments (#) may be useful to easily tell the individual patches apart.
+
+      # Patch Fastlane Match to not print tables
       - name: Patch Match Tables
         run: |
           TABLE_PRINTER_PATH=$(ruby -e 'puts Gem::Specification.find_by_name("fastlane").gem_dir')/match/lib/match/table_printer.rb
@@ -295,7 +323,7 @@ jobs:
       - name: Install Project Dependencies
         run: bundle install
 
-      # Sync the GitHub runner clock with the Windows time server (workaround for timestamp issues)
+      # Sync the GitHub runner clock with the Windows time server (workaround as suggested in https://github.com/actions/runner/issues/2996)
       - name: Sync clock
         run: sudo sntp -sS time.windows.com
 
